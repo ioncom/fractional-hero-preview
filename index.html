@@ -390,29 +390,12 @@ function createTextTexture() {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, 1024, 400);
 
-  // Measure "fractional" to align "we do it" to its left edge
-  ctx.font = '600 90px Kanit';
-  const brandMetrics = ctx.measureText('fractional');
-  const brandLeft = (1024 - brandMetrics.width) / 2;
-
-  // "we do it" — left-aligned, brighter white
-  ctx.textAlign = 'left';
-  ctx.font = '200 24px Kanit';
-  ctx.fillStyle = '#ffffff';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('we do it', brandLeft, 165);
-
-  // Second pass — reinforce "we do it" so it stays white through blend
-  ctx.globalAlpha = 0.7;
-  ctx.fillText('we do it', brandLeft, 165);
-  ctx.globalAlpha = 1.0;
-
-  // "fractional" — centered
+  // Only "fractional" on the main texture (tinted per-module)
   ctx.textAlign = 'center';
   ctx.font = '600 90px Kanit';
   ctx.fillStyle = '#ffffff';
-  ctx.textBaseline = 'top';
-  ctx.fillText('fractional', 512, 170);
+  ctx.textBaseline = 'middle';
+  ctx.fillText('fractional', 512, 200);
 
   const tex = new THREE.CanvasTexture(cvs);
   tex.needsUpdate = true;
@@ -492,6 +475,52 @@ async function initText() {
   document.body.removeChild(probe2);
 
   const planeGeo = new THREE.PlaneGeometry(3.6, 1.4);
+
+  // ─── "we do it" — separate white plane, no tint ───
+  const tagCvs = document.createElement('canvas');
+  const tagDpr = 2;
+  tagCvs.width = 512 * tagDpr;
+  tagCvs.height = 100 * tagDpr;
+  const tagCtx = tagCvs.getContext('2d');
+  tagCtx.scale(tagDpr, tagDpr);
+  tagCtx.clearRect(0, 0, 512, 100);
+  tagCtx.textAlign = 'left';
+  tagCtx.font = '200 24px Kanit';
+  tagCtx.fillStyle = '#ffffff';
+  tagCtx.textBaseline = 'middle';
+  tagCtx.fillText('we do it', 20, 50);
+  const tagTex = new THREE.CanvasTexture(tagCvs);
+
+  const tagMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTex: { value: tagTex },
+      uIntro: { value: 0 },
+    },
+    vertexShader: `
+      uniform float uIntro;
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D uTex;
+      uniform float uIntro;
+      varying vec2 vUv;
+      void main() {
+        vec4 t = texture2D(uTex, vUv);
+        float a = t.a * 0.7 * smoothstep(0.0, 1.0, uIntro);
+        gl_FragColor = vec4(vec3(1.0), a);
+      }
+    `,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const tagY = isMobile ? -0.15 : 0.25;
+  const tagPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.35), tagMat);
+  tagPlane.position.set(-0.9, tagY, 1.61);
+  scene.add(tagPlane);
+  textPlanes.tag = tagPlane;
 
   const textY = isMobile ? -0.55 : -0.1;
 
@@ -628,6 +657,7 @@ function animate() {
     // Update intro
     textPlanes.dark.material.uniforms.uIntro.value = intro;
     textPlanes.bright.material.uniforms.uIntro.value = intro;
+    if (textPlanes.tag) textPlanes.tag.material.uniforms.uIntro.value = intro;
   }
 
   camera.position.x=mouse.x*0.15;
