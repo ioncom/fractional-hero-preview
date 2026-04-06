@@ -395,12 +395,17 @@ function createTextTexture() {
   const brandMetrics = ctx.measureText('fractional');
   const brandLeft = (1024 - brandMetrics.width) / 2;
 
-  // "we do it" — left-aligned to the brand's left edge
+  // "we do it" — left-aligned, brighter white
   ctx.textAlign = 'left';
   ctx.font = '200 24px Kanit';
   ctx.fillStyle = '#ffffff';
   ctx.textBaseline = 'bottom';
   ctx.fillText('we do it', brandLeft, 165);
+
+  // Second pass — reinforce "we do it" so it stays white through blend
+  ctx.globalAlpha = 0.7;
+  ctx.fillText('we do it', brandLeft, 165);
+  ctx.globalAlpha = 1.0;
 
   // "fractional" — centered
   ctx.textAlign = 'center';
@@ -488,14 +493,16 @@ async function initText() {
 
   const planeGeo = new THREE.PlaneGeometry(3.6, 1.4);
 
+  const textY = isMobile ? -0.55 : -0.1;
+
   const darkTextMat = makeTextPlaneMat(tex, -1.0, 0x3070aa);
   textPlanes.dark = new THREE.Mesh(planeGeo, darkTextMat);
-  textPlanes.dark.position.set(-0.05, -0.1, 1.6);
+  textPlanes.dark.position.set(-0.05, textY, 1.6);
   scene.add(textPlanes.dark);
 
   const brightTextMat = makeTextPlaneMat(tex, 1.0, 0x40aadd);
   textPlanes.bright = new THREE.Mesh(planeGeo, brightTextMat);
-  textPlanes.bright.position.set(-0.05, -0.1, 1.6);
+  textPlanes.bright.position.set(-0.05, textY, 1.6);
   scene.add(textPlanes.bright);
 }
 initText();
