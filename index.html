@@ -516,7 +516,7 @@ async function initText() {
     `,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });
-  const tagY = isMobile ? 0.03 : 0.13;
+  const tagY = isMobile ? 0.06 : 0.13;
   const tagPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.35), tagMat);
   tagPlane.position.set(0.08, tagY, 1.61);
   scene.add(tagPlane);
