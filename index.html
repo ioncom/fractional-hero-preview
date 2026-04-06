@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fractional Hero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,200;0,300;0,600;0,800;0,900&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: left;
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0;
+    animation: fadeIn 2.5s ease 2s forwards;
+    mix-blend-mode: screen;
+  }
+  .overlay .tagline {
+    font-family: 'Kanit', sans-serif;
+    font-size: 1.3rem;
+    font-weight: 200;
+    color: rgba(255,255,255,0.45);
+    letter-spacing: 0.25em;
+    margin-bottom: 0.1em;
+  }
+  .overlay .brand {
+    font-family: 'Kanit', sans-serif;
+    font-size: 6rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.13);
+    letter-spacing: 0.04em;
+    line-height: 0.95;
+    text-transform: lowercase;
+  }
+  @keyframes fadeIn { to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<!-- CSS overlay removed — text is now 3D in scene -->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// ─── Tuned Settings ──────────────────────────────────────
+const C = {
+  ax: -0.66, ay: 0.06,
+  bx: 0.65,  by: -0.01,
+  angle: -52,
+  gap: 0.004,
+  aa: 0.012,
+  rsa: 0.04,  rsb: 0.035,
+  isens: 0.08, ifric: 0.993,
+  wop: 0.19,  wrad: 1.54,
+  blstr: 0,   blthr: 0.79,
+  flint: 0.4,
+};
+
+const splitRad = C.angle * Math.PI / 180;
+const planeNormal = new THREE.Vector3(Math.cos(splitRad), Math.sin(splitRad), 0).normalize();
+
+// ─── Scene ───────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x010208);
+
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0, 5.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.9;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  C.blstr, 0.6, C.blthr
+));
+
+// ─── Lighting ────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x081828, 0.6));
+const kL = new THREE.DirectionalLight(0x2255aa, 1.0);
+kL.position.set(3, 3, 4); scene.add(kL);
+const fL = new THREE.DirectionalLight(0x0066aa, 0.4);
+fL.position.set(-3, -1, 3); scene.add(fL);
+
+// ─── Module material ─────────────────────────────────────
+function makeModuleMat(colors, maskSign) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uCam: { value: camera.position },
+      uMouse: { value: new THREE.Vector2(0, 0) },
+      uIntro: { value: 0 },
+      uPlaneN: { value: planeNormal },
+      uPlaneD: { value: C.gap * maskSign },
+      uMaskSign: { value: maskSign },
+      uC0: { value: new THREE.Color(colors[0]) },
+      uC1: { value: new THREE.Color(colors[1]) },
+      uC2: { value: new THREE.Color(colors[2]) },
+      uCR: { value: new THREE.Color(colors[3]) },
+    },
+    vertexShader: `
+      uniform float uIntro;
+      varying vec3 vN, vWP;
+      void main() {
+        vec3 p = position * smoothstep(0.0, 1.0, uIntro);
+        vN = normalize(normalMatrix * normal);
+        vWP = (modelMatrix * vec4(p, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime, uMaskSign, uPlaneD;
+      uniform vec3 uCam, uC0, uC1, uC2, uCR, uPlaneN;
+      uniform vec2 uMouse;
+      varying vec3 vN, vWP;
+
+      void main() {
+        float pd = dot(vWP, uPlaneN);
+        float mv = (pd - uPlaneD) * uMaskSign;
+        float aa = smoothstep(-${C.aa.toFixed(4)}, ${C.aa.toFixed(4)}, mv);
+        if (aa < 0.001) discard;
+
+        vec3 N = normalize(vN);
+        vec3 V = normalize(uCam - vWP);
+
+        float fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+        float tg = N.y * 0.5 + 0.5;
+        float sg = N.x * 0.3 + 0.5;
+        float va = dot(N, V);
+
+        float gf = tg * 0.45 + sg * 0.3 + va * 0.25;
+        vec3 surf = mix(uC0, uC1, smoothstep(0.15, 0.55, gf));
+        surf = mix(surf, uC2, smoothstep(0.5, 0.8, gf));
+        surf = mix(surf, uCR, fresnel * 0.35);
+
+        vec3 L1 = normalize(vec3(3, 3, 4));
+        vec3 L2 = normalize(vec3(-2, -1, 3));
+        float diff = max(dot(N, L1), 0.0) * 0.5
+                   + max(dot(N, L2), 0.0) * 0.2 + 0.22;
+
+        vec3 H = normalize(L1 + V);
+        float spec = pow(max(dot(N, H), 0.0), 80.0);
+
+        vec3 color = surf * diff;
+        color += uCR * spec * 0.2;
+        color += uCR * fresnel * 0.1;
+
+        float mD = length(vWP.xy - uMouse * 2.0);
+        color += uCR * exp(-mD * 1.2) * 0.05;
+
+        float edgeGlow = exp(-abs(mv) * 60.0) * ${C.flint.toFixed(2)};
+        color += uCR * edgeGlow;
+
+        gl_FragColor = vec4(color, aa);
+      }
+    `,
+    transparent: true, depthWrite: true, side: THREE.FrontSide,
+  });
+}
+
+const darkC   = [0x020a18, 0x061a38, 0x0c2850, 0x184878];
+const brightC = [0x052a55, 0x0a5090, 0x1580cc, 0x2098dd];
+const sphereGeo = new THREE.SphereGeometry(1.4, 128, 128);
+
+const moduleA = new THREE.Group();
+const matA = makeModuleMat(darkC, -1.0);
+moduleA.add(new THREE.Mesh(sphereGeo, matA));
+moduleA.position.set(C.ax, C.ay, 0);
+scene.add(moduleA);
+
+const moduleB = new THREE.Group();
+const matB = makeModuleMat(brightC, 1.0);
+moduleB.add(new THREE.Mesh(sphereGeo, matB));
+moduleB.position.set(C.bx, C.by, 0.05);
+scene.add(moduleB);
+
+// ─── Wireframes ──────────────────────────────────────────
+function makeWire(subdiv, alpha, maskSign, colBase, colHover) {
+  const geo = new THREE.IcosahedronGeometry(C.wrad, subdiv);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uM3: { value: new THREE.Vector3(0,0,2) },
+      uIntro: { value: 0 },
+      uAlpha: { value: alpha },
+      uCA: { value: new THREE.Color(colBase) },
+      uCB: { value: new THREE.Color(colHover) },
+      uPlaneN: { value: planeNormal },
+      uPlaneD: { value: C.gap * maskSign },
+      uMaskSign: { value: maskSign },
+    },
+    vertexShader: `
+      uniform float uIntro;
+      varying vec3 vWP;
+      void main() {
+        vec3 p = position * smoothstep(0.0,1.0,uIntro);
+        vWP = (modelMatrix * vec4(p,1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p,1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime, uAlpha, uMaskSign, uPlaneD;
+      uniform vec3 uM3, uCA, uCB, uPlaneN;
+      varying vec3 vWP;
+      void main() {
+        float mv = (dot(vWP, uPlaneN) - uPlaneD) * uMaskSign;
+        if (mv < -0.005) discard;
+        float aa = smoothstep(-0.005, 0.005, mv);
+        float md = length(vWP.xy - uM3.xy);
+        float prox = exp(-md * 1.8) * 0.35;
+        float pulse = sin(uTime * 0.6 + vWP.y * 1.8) * 0.02;
+        float a = (uAlpha + prox * 0.15 + pulse) * aa;
+        vec3 c = mix(uCA, uCB, clamp(prox * 1.5, 0.0, 1.0));
+        gl_FragColor = vec4(c, a);
+      }
+    `,
+    wireframe: true, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  return { mesh: new THREE.Mesh(geo, mat), mat };
+}
+
+const dwA = makeWire(3, C.wop, -1.0, 0x0c1e45, 0x1a4888);
+const dwB = makeWire(6, C.wop * 0.5, -1.0, 0x0a1838, 0x153870);
+moduleA.add(dwA.mesh, dwB.mesh);
+
+const bwA = makeWire(3, C.wop * 1.2, 1.0, 0x103858, 0x1878aa);
+const bwB = makeWire(6, C.wop * 0.6, 1.0, 0x0c2a48, 0x146090);
+moduleB.add(bwA.mesh, bwB.mesh);
+const allWires = [dwA, dwB, bwA, bwB];
+
+// ─── Dots ────────────────────────────────────────────────
+function makeDots(srcGeo, maskSign, colBase, colHover) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', srcGeo.attributes.position.clone());
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uM3: { value: new THREE.Vector3(0,0,2) },
+      uIntro: { value: 0 },
+      uCA: { value: new THREE.Color(colBase) },
+      uCB: { value: new THREE.Color(colHover) },
+      uPlaneN: { value: planeNormal },
+      uPlaneD: { value: C.gap * maskSign },
+      uMaskSign: { value: maskSign },
+    },
+    vertexShader: `
+      uniform float uTime, uIntro, uMaskSign, uPlaneD;
+      uniform vec3 uM3, uPlaneN;
+      varying float vP, vMask;
+      void main() {
+        float intro = smoothstep(0.0,1.0,uIntro);
+        vec3 p = position * intro;
+        vec4 wp = modelMatrix * vec4(p,1.0);
+        vMask = (dot(wp.xyz, uPlaneN) - uPlaneD) * uMaskSign;
+        vP = exp(-length(wp.xy - uM3.xy) * 2.5);
+        vec4 mv = modelViewMatrix * vec4(p,1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = (0.8 + vP * 2.0) * (200.0 / -mv.z) * intro;
+        if (vMask < 0.0) gl_PointSize = 0.0;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uCA, uCB;
+      varying float vP, vMask;
+      void main() {
+        if (vMask < 0.0) discard;
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        if (d > 1.0) discard;
+        float soft = exp(-d * d * 3.0);
+        float a = soft * (0.04 + vP * 0.25);
+        vec3 c = mix(uCA, uCB, vP * 0.7);
+        gl_FragColor = vec4(c, a);
+      }
+    `,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  return { pts: new THREE.Points(geo, mat), mat };
+}
+
+const dDots = makeDots(dwA.mesh.geometry, -1.0, 0x0c1e45, 0x2060aa);
+moduleA.add(dDots.pts);
+const bDots = makeDots(bwA.mesh.geometry, 1.0, 0x103858, 0x1888bb);
+moduleB.add(bDots.pts);
+const allDots = [dDots, bDots];
+
+// ─── Seam flare ──────────────────────────────────────────
+const fMat = new THREE.ShaderMaterial({
+  uniforms: { uTime: { value: 0 }, uIntro: { value: 0 } },
+  vertexShader: `
+    uniform float uIntro;
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix
+        * vec4(position * smoothstep(0.0,1.0,uIntro), 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform float uTime;
+    varying vec2 vUv;
+    void main() {
+      vec2 uv = vUv - 0.5;
+      float ld = abs(uv.x);
+      float core = exp(-ld * 200.0) * ${C.flint.toFixed(2)};
+      float soft = exp(-ld * 45.0) * ${(C.flint * 0.33).toFixed(3)};
+      float edge = 1.0 - smoothstep(0.3, 0.5, abs(uv.y));
+      float rad = max(1.0 - length(uv) * 1.6, 0.0);
+      float a = (core + soft) * edge * rad;
+      a *= 0.85 + sin(uTime * 1.0) * 0.15;
+      vec3 c = mix(vec3(0.08,0.25,0.50), vec3(0.15,0.45,0.75),
+        core / max(core+soft, 0.001));
+      gl_FragColor = vec4(c, a);
+    }
+  `,
+  transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+});
+const flare = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 3.5), fMat);
+flare.rotation.z = splitRad;
+scene.add(flare);
+
+const gapLight = new THREE.PointLight(0x1858a0, 0.6, 4);
+scene.add(gapLight);
+
+// ─── Particles ───────────────────────────────────────────
+const pC = 60;
+const pG = new THREE.BufferGeometry();
+const pP = new Float32Array(pC * 3), pV = [];
+for (let i = 0; i < pC; i++) {
+  const th = Math.random()*Math.PI*2, ph = Math.acos(2*Math.random()-1);
+  const r = 2.5 + Math.random()*2;
+  pP[i*3]=r*Math.sin(ph)*Math.cos(th);
+  pP[i*3+1]=r*Math.sin(ph)*Math.sin(th);
+  pP[i*3+2]=r*Math.cos(ph)*0.3;
+  pV.push({x:(Math.random()-.5)*.0005,y:(Math.random()-.5)*.0005,z:(Math.random()-.5)*.0002});
+}
+pG.setAttribute('position',new THREE.BufferAttribute(pP,3));
+const parts = new THREE.Points(pG, new THREE.PointsMaterial({
+  size:.008,color:0x2060aa,transparent:true,opacity:.15,
+  blending:THREE.AdditiveBlending,depthWrite:false
+}));
+scene.add(parts);
+
+// ─── 3D TEXT — canvas texture, split by diagonal ─────────
+const textPlanes = { dark: null, bright: null };
+const parallaxAmount = 0.08; // how much text halves shift apart
+
+function createTextTexture() {
+  const cvs = document.createElement('canvas');
+  const dpr = 2;
+  cvs.width = 1024 * dpr;
+  cvs.height = 400 * dpr;
+  const ctx = cvs.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, 1024, 400);
+
+  // Measure "fractional" to align "we do it" to its left edge
+  ctx.font = '600 90px Kanit';
+  const brandMetrics = ctx.measureText('fractional');
+  const brandLeft = (1024 - brandMetrics.width) / 2;
+
+  // "we do it" — left-aligned to the brand's left edge
+  ctx.textAlign = 'left';
+  ctx.font = '200 24px Kanit';
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('we do it', brandLeft, 165);
+
+  // "fractional" — centered
+  ctx.textAlign = 'center';
+  ctx.font = '600 90px Kanit';
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'top';
+  ctx.fillText('fractional', 512, 170);
+
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function makeTextPlaneMat(texture, maskSign, tintColor) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTex: { value: texture },
+      uPlaneN: { value: planeNormal },
+      uPlaneD: { value: C.gap * maskSign },
+      uMaskSign: { value: maskSign },
+      uTint: { value: new THREE.Color(tintColor) },
+      uIntro: { value: 0 },
+    },
+    vertexShader: `
+      uniform float uIntro;
+      varying vec2 vUv;
+      varying vec3 vWP;
+      void main() {
+        vUv = uv;
+        vec3 p = position;
+        vWP = (modelMatrix * vec4(p, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D uTex;
+      uniform vec3 uPlaneN, uTint;
+      uniform float uPlaneD, uMaskSign, uIntro;
+      varying vec2 vUv;
+      varying vec3 vWP;
+
+      void main() {
+        // Diagonal mask
+        float pd = dot(vWP, uPlaneN);
+        float mv = (pd - uPlaneD) * uMaskSign;
+        float aa = smoothstep(-0.012, 0.012, mv);
+        if (aa < 0.001) discard;
+
+        vec4 texel = texture2D(uTex, vUv);
+        float textAlpha = texel.a * 0.35 * aa * smoothstep(0.0, 1.0, uIntro);
+
+        // Tint with module color — "color inherit" effect
+        vec3 color = uTint * texel.rgb;
+
+        gl_FragColor = vec4(color, textAlpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+}
+
+// Wait for fonts, then build text planes
+async function initText() {
+  // Wait for Google Fonts stylesheet to load Kanit
+  await document.fonts.ready;
+  // Force-trigger font rendering so browser actually loads the weights
+  const probe = document.createElement('span');
+  probe.style.cssText = 'font-family:Kanit;font-weight:200;position:absolute;left:-9999px;';
+  probe.textContent = 'test';
+  document.body.appendChild(probe);
+  const probe2 = document.createElement('span');
+  probe2.style.cssText = 'font-family:Kanit;font-weight:600;position:absolute;left:-9999px;';
+  probe2.textContent = 'test';
+  document.body.appendChild(probe2);
+
+  // Small delay to ensure fonts are rasterized
+  await new Promise(r => setTimeout(r, 500));
+
+  const tex = createTextTexture();
+  document.body.removeChild(probe);
+  document.body.removeChild(probe2);
+
+  const planeGeo = new THREE.PlaneGeometry(3.6, 1.4);
+
+  const darkTextMat = makeTextPlaneMat(tex, -1.0, 0x3070aa);
+  textPlanes.dark = new THREE.Mesh(planeGeo, darkTextMat);
+  textPlanes.dark.position.set(-0.05, -0.1, 1.6);
+  scene.add(textPlanes.dark);
+
+  const brightTextMat = makeTextPlaneMat(tex, 1.0, 0x40aadd);
+  textPlanes.bright = new THREE.Mesh(planeGeo, brightTextMat);
+  textPlanes.bright.position.set(-0.05, -0.1, 1.6);
+  scene.add(textPlanes.bright);
+}
+initText();
+
+// Diagonal direction for parallax offset
+const diagDir = new THREE.Vector2(
+  Math.cos(splitRad + Math.PI * 0.5),
+  Math.sin(splitRad + Math.PI * 0.5)
+).normalize();
+
+// ─── Mouse + inertia ─────────────────────────────────────
+const mouse = { x:0,y:0,tx:0,ty:0,prevTx:0,prevTy:0,vx:0,vy:0 };
+document.addEventListener('mousemove', e => {
+  mouse.prevTx = mouse.tx; mouse.prevTy = mouse.ty;
+  mouse.tx = (e.clientX/window.innerWidth)*2-1;
+  mouse.ty = -(e.clientY/window.innerHeight)*2+1;
+  mouse.vx += (mouse.tx - mouse.prevTx) * 2.0;
+  mouse.vy += (mouse.ty - mouse.prevTy) * 2.0;
+});
+const inertiaA = { ry:0, rx:0 };
+const inertiaB = { ry:0, rx:0 };
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  composer.setSize(window.innerWidth,window.innerHeight);
+});
+
+// ─── Animate ─────────────────────────────────────────────
+let intro = 0;
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  if (intro < 1) intro = Math.min(1, intro + 0.008);
+
+  mouse.x += (mouse.tx - mouse.x) * 0.04;
+  mouse.y += (mouse.ty - mouse.y) * 0.04;
+  const m3 = new THREE.Vector3(mouse.x*2, mouse.y*1.5, 2);
+
+  // Inertia
+  inertiaA.ry += mouse.vx * C.isens;
+  inertiaA.rx += mouse.vy * C.isens * 0.6;
+  inertiaB.ry -= mouse.vx * C.isens * 0.75;
+  inertiaB.rx -= mouse.vy * C.isens * 0.5;
+  inertiaA.ry *= C.ifric; inertiaA.rx *= C.ifric;
+  inertiaB.ry *= C.ifric; inertiaB.rx *= C.ifric;
+  mouse.vx *= 0.92; mouse.vy *= 0.92;
+
+  // Modules
+  moduleA.rotation.y = t * C.rsa + mouse.x * 0.1 + inertiaA.ry;
+  moduleA.rotation.x = Math.sin(t * 0.05) * 0.03 + mouse.y * 0.06 + inertiaA.rx;
+
+  moduleB.rotation.y = -t * C.rsb - mouse.x * 0.08 + inertiaB.ry;
+  moduleB.rotation.x = -Math.cos(t * 0.045) * 0.025 - mouse.y * 0.05 + inertiaB.rx;
+
+  // Uniforms
+  [matA, matB].forEach(m => {
+    m.uniforms.uTime.value = t;
+    m.uniforms.uMouse.value.set(mouse.x, mouse.y);
+    m.uniforms.uIntro.value = intro;
+  });
+  fMat.uniforms.uTime.value = t;
+  fMat.uniforms.uIntro.value = intro;
+  gapLight.intensity = 0.5 + Math.sin(t) * 0.1;
+
+  allWires.forEach(w => {
+    w.mat.uniforms.uTime.value = t;
+    w.mat.uniforms.uM3.value.copy(m3);
+    w.mat.uniforms.uIntro.value = intro;
+  });
+  allDots.forEach(d => {
+    d.mat.uniforms.uTime.value = t;
+    d.mat.uniforms.uM3.value.copy(m3);
+    d.mat.uniforms.uIntro.value = intro;
+  });
+
+  const pa = parts.geometry.attributes.position.array;
+  for (let i=0;i<pC;i++){
+    pa[i*3]+=pV[i].x; pa[i*3+1]+=pV[i].y; pa[i*3+2]+=pV[i].z;
+    if(Math.abs(pa[i*3])>4)pV[i].x*=-1;
+    if(Math.abs(pa[i*3+1])>3)pV[i].y*=-1;
+  }
+  parts.geometry.attributes.position.needsUpdate=true;
+  parts.rotation.y=t*0.005;
+
+  // ─── 3D Text parallax along diagonal ────────────
+  if (textPlanes.dark && textPlanes.bright) {
+    // Mouse projected onto diagonal axis
+    const diagProj = mouse.x * diagDir.x + mouse.y * diagDir.y;
+    const px = parallaxAmount * diagProj;
+
+    // Dark half shifts one way, bright the other
+    textPlanes.dark.position.x = -0.05 - diagDir.x * px;
+    textPlanes.dark.position.y = -0.1 - diagDir.y * px;
+
+    textPlanes.bright.position.x = -0.05 + diagDir.x * px;
+    textPlanes.bright.position.y = -0.1 + diagDir.y * px;
+
+    // Update intro
+    textPlanes.dark.material.uniforms.uIntro.value = intro;
+    textPlanes.bright.material.uniforms.uIntro.value = intro;
+  }
+
+  camera.position.x=mouse.x*0.15;
+  camera.position.y=mouse.y*0.08;
+  camera.lookAt(0,0,0);
+
+  composer.render();
+}
+animate();
+</script>
+</body>
+</html>
