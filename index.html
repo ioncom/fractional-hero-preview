@@ -518,7 +518,7 @@ async function initText() {
   });
   const tagY = isMobile ? 0.06 : 0.13;
   const tagPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.35), tagMat);
-  tagPlane.position.set(0.08, tagY, 1.61);
+  tagPlane.position.set(0.13, tagY, 1.61);
   scene.add(tagPlane);
   textPlanes.tag = tagPlane;
 
@@ -526,12 +526,12 @@ async function initText() {
 
   const darkTextMat = makeTextPlaneMat(tex, -1.0, 0x3070aa);
   textPlanes.dark = new THREE.Mesh(planeGeo, darkTextMat);
-  textPlanes.dark.position.set(-0.05, textY, 1.6);
+  textPlanes.dark.position.set(0, textY, 1.6);
   scene.add(textPlanes.dark);
 
   const brightTextMat = makeTextPlaneMat(tex, 1.0, 0x40aadd);
   textPlanes.bright = new THREE.Mesh(planeGeo, brightTextMat);
-  textPlanes.bright.position.set(-0.05, textY, 1.6);
+  textPlanes.bright.position.set(0, textY, 1.6);
   scene.add(textPlanes.bright);
 }
 initText();
@@ -648,10 +648,10 @@ function animate() {
     const px = parallaxAmount * diagProj;
 
     // Dark half shifts one way, bright the other
-    textPlanes.dark.position.x = -0.05 - diagDir.x * px;
+    textPlanes.dark.position.x = 0 - diagDir.x * px;
     textPlanes.dark.position.y = -0.1 - diagDir.y * px;
 
-    textPlanes.bright.position.x = -0.05 + diagDir.x * px;
+    textPlanes.bright.position.x = 0 + diagDir.x * px;
     textPlanes.bright.position.y = -0.1 + diagDir.y * px;
 
     // Update intro
