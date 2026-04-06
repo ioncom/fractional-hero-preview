@@ -62,6 +62,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
+// ─── Mobile detection ────────────────────────────────────
+const isMobile = window.innerWidth < 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
 // ─── Tuned Settings ──────────────────────────────────────
 const C = {
   ax: -0.66, ay: 0.06,
@@ -71,9 +74,13 @@ const C = {
   aa: 0.012,
   rsa: 0.04,  rsb: 0.035,
   isens: 0.08, ifric: 0.993,
-  wop: 0.19,  wrad: 1.54,
+  wop: isMobile ? 0.10 : 0.19,
+  wrad: isMobile ? 1.50 : 1.54,
   blstr: 0,   blthr: 0.79,
   flint: 0.4,
+  sphereDetail: isMobile ? 64 : 128,
+  wireSubA: isMobile ? 2 : 3,
+  wireSubB: isMobile ? 4 : 6,
 };
 
 const splitRad = C.angle * Math.PI / 180;
@@ -87,7 +94,7 @@ const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerH
 camera.position.set(0, 0, 5.5);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.9;
@@ -185,7 +192,7 @@ function makeModuleMat(colors, maskSign) {
 
 const darkC   = [0x020a18, 0x061a38, 0x0c2850, 0x184878];
 const brightC = [0x052a55, 0x0a5090, 0x1580cc, 0x2098dd];
-const sphereGeo = new THREE.SphereGeometry(1.4, 128, 128);
+const sphereGeo = new THREE.SphereGeometry(1.4, C.sphereDetail, C.sphereDetail);
 
 const moduleA = new THREE.Group();
 const matA = makeModuleMat(darkC, -1.0);
@@ -245,12 +252,12 @@ function makeWire(subdiv, alpha, maskSign, colBase, colHover) {
   return { mesh: new THREE.Mesh(geo, mat), mat };
 }
 
-const dwA = makeWire(3, C.wop, -1.0, 0x0c1e45, 0x1a4888);
-const dwB = makeWire(6, C.wop * 0.5, -1.0, 0x0a1838, 0x153870);
+const dwA = makeWire(C.wireSubA, C.wop, -1.0, 0x0c1e45, 0x1a4888);
+const dwB = makeWire(C.wireSubB, C.wop * 0.5, -1.0, 0x0a1838, 0x153870);
 moduleA.add(dwA.mesh, dwB.mesh);
 
-const bwA = makeWire(3, C.wop * 1.2, 1.0, 0x103858, 0x1878aa);
-const bwB = makeWire(6, C.wop * 0.6, 1.0, 0x0c2a48, 0x146090);
+const bwA = makeWire(C.wireSubA, C.wop * 1.2, 1.0, 0x103858, 0x1878aa);
+const bwB = makeWire(C.wireSubB, C.wop * 0.6, 1.0, 0x0c2a48, 0x146090);
 moduleB.add(bwA.mesh, bwB.mesh);
 const allWires = [dwA, dwB, bwA, bwB];
 
@@ -303,11 +310,14 @@ function makeDots(srcGeo, maskSign, colBase, colHover) {
   return { pts: new THREE.Points(geo, mat), mat };
 }
 
-const dDots = makeDots(dwA.mesh.geometry, -1.0, 0x0c1e45, 0x2060aa);
-moduleA.add(dDots.pts);
-const bDots = makeDots(bwA.mesh.geometry, 1.0, 0x103858, 0x1888bb);
-moduleB.add(bDots.pts);
-const allDots = [dDots, bDots];
+const allDots = [];
+if (!isMobile) {
+  const dDots = makeDots(dwA.mesh.geometry, -1.0, 0x0c1e45, 0x2060aa);
+  moduleA.add(dDots.pts);
+  const bDots = makeDots(bwA.mesh.geometry, 1.0, 0x103858, 0x1888bb);
+  moduleB.add(bDots.pts);
+  allDots.push(dDots, bDots);
+}
 
 // ─── Seam flare ──────────────────────────────────────────
 const fMat = new THREE.ShaderMaterial({
@@ -349,7 +359,7 @@ const gapLight = new THREE.PointLight(0x1858a0, 0.6, 4);
 scene.add(gapLight);
 
 // ─── Particles ───────────────────────────────────────────
-const pC = 60;
+const pC = isMobile ? 0 : 60;
 const pG = new THREE.BufferGeometry();
 const pP = new Float32Array(pC * 3), pV = [];
 for (let i = 0; i < pC; i++) {
@@ -505,6 +515,27 @@ document.addEventListener('mousemove', e => {
   mouse.vx += (mouse.tx - mouse.prevTx) * 2.0;
   mouse.vy += (mouse.ty - mouse.prevTy) * 2.0;
 });
+
+// ─── Touch inertia (mobile) ─────────────────────────────
+if (isMobile) {
+  document.addEventListener('touchmove', e => {
+    const t = e.touches[0];
+    const nx = (t.clientX / window.innerWidth) * 2 - 1;
+    const ny = -(t.clientY / window.innerHeight) * 2 + 1;
+    mouse.vx += (nx - mouse.tx) * 2.0;
+    mouse.vy += (ny - mouse.ty) * 2.0;
+    mouse.tx = nx;
+    mouse.ty = ny;
+  }, { passive: true });
+
+  // Gyroscope tilt → gentle rotation
+  if (window.DeviceOrientationEvent) {
+    window.addEventListener('deviceorientation', e => {
+      if (e.gamma != null) mouse.tx = (e.gamma / 45) * 0.5;  // left-right tilt
+      if (e.beta != null) mouse.ty = ((e.beta - 45) / 45) * 0.3; // front-back tilt
+    }, { passive: true });
+  }
+}
 const inertiaA = { ry:0, rx:0 };
 const inertiaB = { ry:0, rx:0 };
 
